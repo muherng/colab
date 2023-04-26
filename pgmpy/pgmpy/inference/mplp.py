@@ -311,7 +311,6 @@ class Mplp(Inference):
         cluster_potential = sending_cluster.cluster_potential
         cardinalities = cluster_potential.cardinality
 
-        #defined to be lambda_e'->e'(x_e') + \sum_{c' \neq c and e' \in c'} lambda_{c'->e'}(x_e')
         objective_cluster = DiscreteFactor(triplet,cardinalities,np.zeros(np.prod(cardinalities)))  
         edge_terms = {}
         for current_intersect in sending_cluster.intersection_sets_for_cluster_c:
@@ -509,6 +508,7 @@ class Mplp(Inference):
                         if set(pair) in edges:
                             size += 1
                             intersects.append(set(pair))
+                    #this line ensures we find triangles that don't already exist
                     if size >= inter_size and frozenset(tri) not in model_triplets:
                         triplets.add(frozenset(tri))
 
@@ -676,16 +676,9 @@ class Mplp(Inference):
                 if len(scope) == 3:
                     triplet = frozenset(factor.scope())
                     sending_cluster = self.cluster_set[triplet]
-                    start = time.time()
                     self._update_message_triplet_edge(sending_cluster)
-                    end = time.time()
-                    #print('time triplet to edge: ', end - start)
             # Find an integral solution by locally maximizing the single node beliefs
             self._local_decode()
-            #if niter % 10 == 0:
-                 #for node in self.objective_new:
-                 #   if len(node) == 1: 
-                 #       print(self.objective_new[node].values)
             # If mplp converges to a global/local optima, we break.
             if (
                 self._is_converged(self.dual_threshold, self.integrality_gap_threshold)
@@ -713,16 +706,19 @@ class Mplp(Inference):
                 #no need to add sum triplet messages into edge because they are zero
                 self.objective_new[frozenset(scope)] = theta
 
-    def mode_random(self,triangles):
-        
-        triplet_scores = self._get_triplet_scores(triangles)
+    def mode_random(self,max_triplets):
+        triangles = self.find_triangles()
+        print('length triangles: ', len(triangles))
         import random
-        add_triplets = list(set(random.choices(triplet_scores,k=max_triplets)))
+        #print(random.choices(triangles,k=1))
+        add_triplets = list(set(random.choices(triangles,k=max_triplets)))
         
         return add_triplets
 
-    def mode_eval(self, triangles, max_triplets): 
+    def mode_eval(self, max_triplets): 
         # Evaluate scores for each of the triplets found above
+        triangles = self.find_triangles()
+        print('length triangles: ', len(triangles))
         add_triplets = []
         triplet_scores = self._get_triplet_scores(triangles)
         print('Eval Mode')
@@ -732,7 +728,10 @@ class Mplp(Inference):
                 print(item[1])
         #sorted_scores = sorted(triplet_scores, key=triplet_scores.get) 
         for triplet_number in range(max_triplets):
-            (addition,dec) = sorted_scores.pop()
+            if sorted_scores: 
+                (addition,dec) = sorted_scores.pop()
+            else:
+                break 
             add_triplets.append(addition)
             print('addition: ', (addition,dec))
             print('shortest path: ', self.paths(addition))
@@ -746,7 +745,10 @@ class Mplp(Inference):
             if triplet_number >= max_triplets:
                 print('break triplet number')
                 break
-            addition = sorted_scores.pop()
+            if sorted_scores: 
+                addition = sorted_scores.pop()
+            else:
+                break
             if len(addition) != 3:
                 raise ValueError("pop not triplet")
             size = 0
@@ -765,7 +767,8 @@ class Mplp(Inference):
         #self.get_edge_pairs() 
         #import random
 
-    def mode_subsample(self,triangles,sorted_scores, max_triplets, fraction): 
+    def mode_subsample(self, max_triplets, fraction): 
+        triangles = self.find_triangles()
         add_triplets = []
         (_,_,trip_exist) = self.get_factors_by_type()
         import random
@@ -804,44 +807,45 @@ class Mplp(Inference):
         #which is not guaranteed to be zero.  
         #triplet setup runs only once when switching from max product to triplet mode
         self.triplet_setup()
-        start = time.time()
-        triangles = self.find_triangles()
-        print('length triangles: ', len(triangles))
+        #start = time.time()
+        #triangles = self.find_triangles()
+        #print('length triangles: ', len(triangles))
         # Evaluate scores for each of the triplets found above
-        triplet_scores = self._get_triplet_scores(triangles)
-        end = time.time()
-        print('TIME FOR SORT: ', end-start)
+        #triplet_scores = self._get_triplet_scores(triangles)
+        #end = time.time()
+        #print('time for sort: ', end-start)
         # Arrange the keys on the basis of increasing order of th3e values of the dict. triplet_scores
-        sorted_scores = sorted(triplet_scores, key=triplet_scores.get) 
-        print("SORTED SCORES")
-        all_score = []
-        for val in triplet_scores.values():
-            all_score.append(val)
-        all_score.sort()
+        #sorted_scores = sorted(triplet_scores, key=triplet_scores.get) 
+        #print("SORTED SCORES")
+        #all_score = []
+        #for val in triplet_scores.values():
+        #    all_score.append(val)
+        #all_score.sort()
         #print(all_score)
         #find cycles only once when flipping from mplp to triplet mode
+        start = time.time()
         for niter in range(max_iterations):
             if self._is_converged(
                 integrality_gap_threshold=self.integrality_gap_threshold
             ):
                 break 
             add_triplets = []
-            triangles = self.find_triangles()
-            print('length triangles: ', len(triangles))
             if mode == 'mcmc': 
-                #generate k triangles
-                #pick an edge per triangle to move
-                #switch with weighted probability
-                #not implemented 
                 raise NotImplementedError
-                #add_triplets = self.mode_mcmc(triangles)
             if mode == 'subsample':
-                add_triplets = self.mode_subsample(triangles,sorted_scores, max_triplets, 0.1)
+                add_triplets = self.mode_subsample(max_triplets, 0.05)
             if mode == 'random':
-                add_triplets = self.mode_random(triangles,max_triplets)
+                add_triplets = self.mode_random(max_triplets)
             if mode == 'eval':
-                add_triplets = self.mode_eval(triangles, max_triplets)
+                add_triplets = self.mode_eval(max_triplets)
             if mode == 'greedy-hack': 
+                if niter == 0: 
+                    triangles = self.find_triangles()
+                    print('length triangles: ', len(triangles))
+                    # Evaluate scores for each of the triplets found above
+                    triplet_scores = self._get_triplet_scores(triangles)
+                    # Arrange the keys on the basis of increasing order of the values of the dict. triplet_scores
+                    sorted_scores = sorted(triplet_scores, key=triplet_scores.get) 
                 add_triplets = self.mode_greedy(triangles,sorted_scores, max_triplets)
             if mode == 'cycle': 
                 add_triplets = []
@@ -1006,7 +1010,7 @@ class Mplp(Inference):
         >>> result
         {'B': 0.93894, 'C': 1.121, 'A': 1.8323, 'F': 1.5093, 'D': 1.7765, 'E': 2.12239}
         """
-        print('correct pgmpy')
+        print('conda environment try pgmpy')
         self.dual_threshold = dual_threshold
         self.integrality_gap_threshold = integrality_gap_threshold
         # Run MPLP initially for a maximum of init_iter times.
